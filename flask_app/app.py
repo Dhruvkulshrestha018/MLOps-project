@@ -96,8 +96,6 @@ mlflow.set_tracking_uri(f'{dagshub_url}/{repo_owner}/{repo_name}.mlflow')
 # Initialize Flask app
 app = Flask(__name__)
 
-# from prometheus_client import CollectorRegistry
-
 # Create a custom registry
 registry = CollectorRegistry()
 
@@ -113,27 +111,62 @@ PREDICTION_COUNT = Counter(
 )
 
 # ------------------------------------------------------------------------------------------
-# Model and vectorizer setup
+# Model and vectorizer setup with lazy loading
 model_name = "my_model"
-def get_latest_model_version(model_name):
-    client = mlflow.MlflowClient()
-    latest_version = client.get_latest_versions(model_name, stages=["staging"])
-    if not latest_version:
-        latest_version = client.get_latest_versions(model_name, stages=["None"])
-    return latest_version[0].version if latest_version else None
 
-model_version = get_latest_model_version(model_name)
-model_uri = f'models:/{model_name}/{model_version}'
-print(f"Fetching model from: {model_uri}")
-model = mlflow.pyfunc.load_model(model_uri)
-vectorizer = pickle.load(open('models/vectorizer.pkl', 'rb'))
+def get_latest_model_version(model_name):
+    """Get the latest version of the model from MLflow."""
+    try:
+        client = mlflow.MlflowClient()
+        # First try to get staging versions
+        latest_version = client.get_latest_versions(model_name, stages=["staging"])
+        if not latest_version:
+            # If no staging versions, get versions with no stage
+            latest_version = client.get_latest_versions(model_name, stages=["None"])
+        return latest_version[0].version if latest_version else None
+    except Exception as e:
+        print(f"Error getting latest model version: {e}")
+        return None
+
+def get_model():
+    """Lazy load the MLflow model."""
+    if not hasattr(app, 'model'):
+        model_version = get_latest_model_version(model_name)
+        if model_version:
+            model_uri = f'models:/{model_name}/{model_version}'
+            print(f"Fetching model from: {model_uri}")
+            try:
+                app.model = mlflow.pyfunc.load_model(model_uri)
+            except Exception as e:
+                print(f"Error loading model: {e}")
+                app.model = None
+        else:
+            print(f"No model version found for '{model_name}'")
+            app.model = None
+    return app.model
+
+def get_vectorizer():
+    """Lazy load the vectorizer."""
+    if not hasattr(app, 'vectorizer'):
+        try:
+            # Check if vectorizer file exists
+            vectorizer_path = 'models/vectorizer.pkl'
+            if os.path.exists(vectorizer_path):
+                app.vectorizer = pickle.load(open(vectorizer_path, 'rb'))
+            else:
+                print(f"Vectorizer file not found at {vectorizer_path}")
+                app.vectorizer = None
+        except Exception as e:
+            print(f"Error loading vectorizer: {e}")
+            app.vectorizer = None
+    return app.vectorizer
 
 # Routes
 @app.route("/")
 def home():
     REQUEST_COUNT.labels(method="GET", endpoint="/").inc()
     start_time = time.time()
-    response = render_template("index.html", result=None)
+    response = render_template("index.html", result=None, error=None)
     REQUEST_LATENCY.labels(endpoint="/").observe(time.time() - start_time)
     return response
 
@@ -142,30 +175,69 @@ def predict():
     REQUEST_COUNT.labels(method="POST", endpoint="/predict").inc()
     start_time = time.time()
 
-    text = request.form["text"]
-    # Clean text
-    text = normalize_text(text)
-    # Convert to features
-    features = vectorizer.transform([text])
-    features_df = pd.DataFrame(features.toarray(), columns=[str(i) for i in range(features.shape[1])])
+    try:
+        text = request.form["text"]
+        if not text:
+            return render_template("index.html", result=None, error="Please enter some text")
+        
+        # Clean text
+        text = normalize_text(text)
+        
+        # Get model and vectorizer lazily
+        vectorizer = get_vectorizer()
+        model = get_model()
+        
+        # Check if model and vectorizer are loaded
+        if vectorizer is None:
+            return render_template("index.html", result=None, error="Vectorizer not loaded. Please check system configuration.")
+        
+        if model is None:
+            return render_template("index.html", result=None, error="Model not loaded. Please check system configuration.")
+        
+        # Convert to features
+        features = vectorizer.transform([text])
+        features_df = pd.DataFrame(features.toarray(), columns=[str(i) for i in range(features.shape[1])])
 
-    # Predict
-    result = model.predict(features_df)
-    prediction = result[0]
+        # Predict
+        result = model.predict(features_df)
+        prediction = result[0]
 
-    # Increment prediction count metric
-    PREDICTION_COUNT.labels(prediction=str(prediction)).inc()
+        # Increment prediction count metric
+        PREDICTION_COUNT.labels(prediction=str(prediction)).inc()
 
-    # Measure latency
-    REQUEST_LATENCY.labels(endpoint="/predict").observe(time.time() - start_time)
+        # Measure latency
+        REQUEST_LATENCY.labels(endpoint="/predict").observe(time.time() - start_time)
 
-    return render_template("index.html", result=prediction)
+        return render_template("index.html", result=prediction, error=None)
+    
+    except Exception as e:
+        print(f"Error during prediction: {e}")
+        return render_template("index.html", result=None, error=f"Prediction error: {str(e)}")
 
 @app.route("/metrics", methods=["GET"])
 def metrics():
     """Expose only custom Prometheus metrics."""
     return generate_latest(registry), 200, {"Content-Type": CONTENT_TYPE_LATEST}
 
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint."""
+    model = get_model()
+    vectorizer = get_vectorizer()
+    
+    status = {
+        "status": "healthy" if model is not None and vectorizer is not None else "degraded",
+        "model_loaded": model is not None,
+        "vectorizer_loaded": vectorizer is not None
+    }
+    return status, 200 if status["status"] == "healthy" else 503
+
 if __name__ == "__main__":
+    # For local use, you might want to pre-load the model
+    if os.getenv("PRELOAD_MODEL", "false").lower() == "true":
+        print("Pre-loading model and vectorizer...")
+        get_model()
+        get_vectorizer()
+    
     # app.run(debug=True) # for local use
     app.run(debug=True, host="0.0.0.0", port=5000)  # Accessible from outside Docker
