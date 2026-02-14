@@ -38,8 +38,7 @@ import dagshub
 dagshub.init(
     repo_owner='Dhruvkulshrestha018',
     repo_name='MLOps-project',
-    mlflow=True,
-    token=os.getenv("DAGSHUB_TOKEN")
+    mlflow=True
 )
 # -------------------------------------------------------------------------------------
 
