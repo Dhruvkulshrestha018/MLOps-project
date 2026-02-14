@@ -1,6 +1,10 @@
 # params.yaml
 data_ingestion:
   test_size: 0.25
+  bucket_name: mlops-movie-review
+  file_key: data.csv
 
 feature_engineering:
   max_features: 50
+
+  
