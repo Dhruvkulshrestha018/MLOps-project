@@ -30,8 +30,6 @@ jobs:
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
 
       - name: install dependencies
         run: |
@@ -39,5 +37,15 @@ jobs:
           pip install dvc[s3]
 
       - name: run pipeline
-        run: |
-          dvc repro
+        run: dvc repro
+
+      - name: Run model tests
+        run: python -m unittest tests/test_model.py
+
+      - name: Promote model to production
+        if: success()
+        run: python scripts/promote_model.py
+
+      - name: Run Flask app tests
+        if: success()
+        run: python -m unittest tests/test_flask_app.py
