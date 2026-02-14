@@ -6,6 +6,9 @@ jobs:
   project-testing:
     runs-on: ubuntu-latest
 
+    env:
+      DAGSHUB_TOKEN: ${{ secrets.CAPSTONE_TEST }}
+
     steps:
       - name: checkout code
         uses: actions/checkout@v3

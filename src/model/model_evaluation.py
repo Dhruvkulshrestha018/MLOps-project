@@ -32,7 +32,15 @@ from src.logger import logging
 # Below code block is for local use
 # -------------------------------------------------------------------------------------
 mlflow.set_tracking_uri('https://dagshub.com/Dhruvkulshrestha018/MLOps-project.mlflow')
-dagshub.init(repo_owner='Dhruvkulshrestha018', repo_name='MLOps-project', mlflow=True)
+import os
+import dagshub
+
+dagshub.init(
+    repo_owner='Dhruvkulshrestha018',
+    repo_name='MLOps-project',
+    mlflow=True,
+    token=os.getenv("CAPSTONE_TEST")
+)
 # -------------------------------------------------------------------------------------
 
 
