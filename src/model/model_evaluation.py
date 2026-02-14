@@ -39,7 +39,7 @@ dagshub.init(
     repo_owner='Dhruvkulshrestha018',
     repo_name='MLOps-project',
     mlflow=True,
-    token=os.getenv("CAPSTONE_TEST")
+    token=os.getenv("DAGSHUB_TOKEN")
 )
 # -------------------------------------------------------------------------------------
 
